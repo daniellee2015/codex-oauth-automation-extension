@@ -19,7 +19,7 @@
   - 应用/清除代理配置
   - 出口探测与状态诊断
   - `SYNC/NEXT/CHANGE/PROBE` 主流程
-- `background/ip-proxy-provider-lumiproxy.js`
+- `background/ip-proxy-provider-711proxy.js`
   - Provider 级别参数处理（当前重点是 711 账号串 token 规则）
 - `background/message-router.js`
   - 暴露消息接口：
@@ -39,7 +39,7 @@
   - 按钮行为（同步/下一条/Change/检测出口）
   - 运行态文案和诊断详情展示
   - 711 账号参数双向同步（`session/sessTime/region`）
-- `sidepanel/ip-proxy-provider-lumiproxy.js`
+- `sidepanel/ip-proxy-provider-711proxy.js`
   - Provider 级输入辅助（地区推断）
 - `sidepanel/sidepanel.html`
   - 代理区块 UI
