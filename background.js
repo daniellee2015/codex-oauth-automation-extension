@@ -7,6 +7,8 @@ importScripts(
   'background/account-run-history.js',
   'background/contribution-oauth.js',
   'background/mail-2925-session.js',
+  'background/ip-proxy-provider-lumiproxy.js',
+  'background/ip-proxy-core.js',
   'background/panel-bridge.js',
   'background/generated-email-helpers.js',
   'background/signup-flow-helpers.js',
@@ -211,6 +213,41 @@ const CONTRIBUTION_SOURCE_SUB2API = 'sub2api';
 const CONTRIBUTION_SUB2API_DEFAULT_GROUP_NAME = 'codex号池';
 const CONTRIBUTION_SUB2API_PLUS_GROUP_NAME = 'openai-plus';
 const DEFAULT_SUB2API_REDIRECT_URI = 'http://localhost:1455/auth/callback';
+const DEFAULT_IP_PROXY_SERVICE = 'lumiproxy';
+const IP_PROXY_SERVICE_VALUES = ['lumiproxy', 'iproyal', '711proxy', 'omegaproxy'];
+const DEFAULT_IP_PROXY_MODE = 'api';
+const IP_PROXY_MODE_VALUES = ['api', 'account'];
+const DEFAULT_IP_PROXY_PROTOCOL = 'http';
+const IP_PROXY_PROTOCOL_VALUES = ['http', 'https', 'socks4', 'socks5'];
+const IP_PROXY_FETCH_TIMEOUT_MS = 20000;
+const IP_PROXY_SETTINGS_SCOPE = 'regular';
+const IP_PROXY_BYPASS_LIST = ['<local>', 'localhost', '127.0.0.1'];
+const IP_PROXY_ROUTE_ALL_TRAFFIC = true;
+const IP_PROXY_ACCOUNT_LIST_ENABLED = false;
+const IP_PROXY_INIT_ENABLE_EXIT_PROBE = false;
+const IP_PROXY_INIT_SUPPRESS_AUTH_REBIND = true;
+const IP_PROXY_TARGET_HOST_PATTERNS = [
+  'openai.com',
+  '*.openai.com',
+  'chatgpt.com',
+  '*.chatgpt.com',
+  'ipwho.is',
+  '*.ipwho.is',
+  'ipapi.co',
+  '*.ipapi.co',
+  'ipinfo.io',
+  '*.ipinfo.io',
+  'api.ipify.org',
+  'api64.ipify.org',
+  'api.ip.cc',
+  'ifconfig.me',
+  'checkip.amazonaws.com',
+  'ipv4.icanhazip.com',
+  'ident.me',
+  'httpbin.org',
+  'ip-api.com',
+  'myip.ipip.net',
+];
 const AUTO_RUN_TIMER_ALARM_NAME = 'auto-run-timer';
 const AUTO_RUN_TIMER_KIND_SCHEDULED_START = 'scheduled_start';
 const AUTO_RUN_TIMER_KIND_BETWEEN_ROUNDS = 'between_rounds';
@@ -376,6 +413,21 @@ const PERSISTED_SETTING_DEFAULTS = {
   sub2apiPassword: '',
   sub2apiGroupName: DEFAULT_SUB2API_GROUP_NAME,
   sub2apiDefaultProxyName: DEFAULT_SUB2API_PROXY_NAME,
+  ipProxyEnabled: false,
+  ipProxyService: DEFAULT_IP_PROXY_SERVICE,
+  ipProxyMode: DEFAULT_IP_PROXY_MODE,
+  ipProxyApiUrl: '',
+  ipProxyServiceProfiles: {},
+  ipProxyAccountList: '',
+  ipProxyAccountSessionPrefix: '',
+  ipProxyAccountLifeMinutes: '',
+  ipProxyPoolTargetCount: '20',
+  ipProxyHost: '',
+  ipProxyPort: '',
+  ipProxyProtocol: DEFAULT_IP_PROXY_PROTOCOL,
+  ipProxyUsername: '',
+  ipProxyPassword: '',
+  ipProxyRegion: '',
   codex2apiUrl: DEFAULT_CODEX2API_URL,
   codex2apiAdminKey: '',
   customPassword: '',
@@ -485,6 +537,15 @@ const DEFAULT_STATE = {
   sourceLastUrls: {}, // 各来源页面最近一次打开的地址记录。
   logs: [], // 侧边栏展示的运行日志。
   ...PERSISTED_SETTING_DEFAULTS, // 合并 chrome.storage.local 中持久化保存的用户配置。
+  ipProxyApiPool: [],
+  ipProxyApiCurrentIndex: 0,
+  ipProxyApiCurrent: null,
+  ipProxyAccountPool: [],
+  ipProxyAccountCurrentIndex: 0,
+  ipProxyAccountCurrent: null,
+  ipProxyPool: [],
+  ipProxyCurrentIndex: 0,
+  ipProxyCurrent: null,
   luckmailApiKey: '',
   luckmailBaseUrl: DEFAULT_LUCKMAIL_BASE_URL,
   luckmailEmailType: DEFAULT_LUCKMAIL_EMAIL_TYPE,
@@ -515,6 +576,21 @@ const DEFAULT_STATE = {
   currentHotmailAccountId: null,
   currentMail2925AccountId: null,
   preferredIcloudHost: '',
+  ipProxyApplied: false,
+  ipProxyAppliedReason: 'disabled',
+  ipProxyAppliedAt: 0,
+  ipProxyAppliedHost: '',
+  ipProxyAppliedPort: 0,
+  ipProxyAppliedRegion: '',
+  ipProxyAppliedHasAuth: false,
+  ipProxyAppliedProvider: DEFAULT_IP_PROXY_SERVICE,
+  ipProxyAppliedError: '',
+  ipProxyAppliedWarning: '',
+  ipProxyAppliedExitIp: '',
+  ipProxyAppliedExitRegion: '',
+  ipProxyAppliedExitDetecting: false,
+  ipProxyAppliedExitError: '',
+  ipProxyAppliedExitSource: '',
 };
 
 function normalizeAutoRunDelayMinutes(value) {
@@ -1097,6 +1173,63 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '').trim();
     case 'sub2apiDefaultProxyName':
       return String(value || '').trim();
+    case 'ipProxyEnabled':
+      return Boolean(value);
+    case 'ipProxyService':
+      return normalizeIpProxyProviderValue(value);
+    case 'ipProxyMode':
+      return normalizeIpProxyMode(value);
+    case 'ipProxyApiUrl':
+      return String(value || '').trim();
+    case 'ipProxyServiceProfiles':
+      return normalizeIpProxyServiceProfiles(value || {}, PERSISTED_SETTING_DEFAULTS);
+    case 'ipProxyAccountList':
+      return normalizeIpProxyAccountList(value || '');
+    case 'ipProxyAccountSessionPrefix':
+      return normalizeIpProxyAccountSessionPrefix(value || '');
+    case 'ipProxyAccountLifeMinutes':
+      return normalizeIpProxyAccountLifeMinutes(value || '');
+    case 'ipProxyPoolTargetCount':
+      return normalizeIpProxyPoolTargetCount(value || '', 20);
+    case 'ipProxyHost':
+      return String(value || '').trim();
+    case 'ipProxyPort':
+      return String(normalizeIpProxyPort(value || '') || '');
+    case 'ipProxyProtocol':
+      return normalizeIpProxyProtocol(value);
+    case 'ipProxyUsername':
+      return String(value || '').trim();
+    case 'ipProxyPassword':
+      return String(value || '');
+    case 'ipProxyRegion':
+      return String(value || '').trim();
+    case 'ipProxyApiPool':
+      return normalizeProxyPoolEntries(
+        value,
+        normalizeIpProxyProviderValue(value?.provider || DEFAULT_IP_PROXY_SERVICE)
+      );
+    case 'ipProxyApiCurrentIndex':
+      return normalizeIpProxyCurrentIndex(value, 0);
+    case 'ipProxyApiCurrent':
+      return normalizeProxyPoolEntries(value ? [value] : [], DEFAULT_IP_PROXY_SERVICE)[0] || null;
+    case 'ipProxyAccountPool':
+      return normalizeProxyPoolEntries(
+        value,
+        normalizeIpProxyProviderValue(value?.provider || DEFAULT_IP_PROXY_SERVICE)
+      );
+    case 'ipProxyAccountCurrentIndex':
+      return normalizeIpProxyCurrentIndex(value, 0);
+    case 'ipProxyAccountCurrent':
+      return normalizeProxyPoolEntries(value ? [value] : [], DEFAULT_IP_PROXY_SERVICE)[0] || null;
+    case 'ipProxyPool':
+      return normalizeProxyPoolEntries(
+        value,
+        normalizeIpProxyProviderValue(value?.provider || DEFAULT_IP_PROXY_SERVICE)
+      );
+    case 'ipProxyCurrentIndex':
+      return normalizeIpProxyCurrentIndex(value, 0);
+    case 'ipProxyCurrent':
+      return normalizeProxyPoolEntries(value ? [value] : [], DEFAULT_IP_PROXY_SERVICE)[0] || null;
     case 'codex2apiUrl':
       return normalizeCodex2ApiUrl(value);
     case 'codex2apiAdminKey':
@@ -1240,6 +1373,34 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
       domains.unshift(payload.cloudflareTempEmailDomain);
     }
     payload.cloudflareTempEmailDomains = domains;
+  }
+  if (payload.ipProxyServiceProfiles) {
+    const selectedService = normalizeIpProxyProviderValue(
+      payload.ipProxyService || PERSISTED_SETTING_DEFAULTS.ipProxyService
+    );
+    const normalizedProfiles = normalizeIpProxyServiceProfiles(payload.ipProxyServiceProfiles, {
+      ...PERSISTED_SETTING_DEFAULTS,
+      ...payload,
+    });
+    payload.ipProxyServiceProfiles = normalizedProfiles;
+    const activeProfile = normalizedProfiles[selectedService]
+      || buildIpProxyServiceProfileFromState({
+        ...PERSISTED_SETTING_DEFAULTS,
+        ...payload,
+      });
+    payload.ipProxyService = selectedService;
+    payload.ipProxyMode = normalizeIpProxyMode(activeProfile?.mode || payload.ipProxyMode);
+    payload.ipProxyApiUrl = String(activeProfile?.apiUrl || payload.ipProxyApiUrl || '').trim();
+    payload.ipProxyAccountList = normalizeIpProxyAccountList(activeProfile?.accountList || payload.ipProxyAccountList || '');
+    payload.ipProxyAccountSessionPrefix = normalizeIpProxyAccountSessionPrefix(activeProfile?.accountSessionPrefix || payload.ipProxyAccountSessionPrefix || '');
+    payload.ipProxyAccountLifeMinutes = normalizeIpProxyAccountLifeMinutes(activeProfile?.accountLifeMinutes || payload.ipProxyAccountLifeMinutes || '');
+    payload.ipProxyPoolTargetCount = normalizeIpProxyPoolTargetCount(activeProfile?.poolTargetCount || payload.ipProxyPoolTargetCount || '', 20);
+    payload.ipProxyHost = String(activeProfile?.host || payload.ipProxyHost || '').trim();
+    payload.ipProxyPort = String(normalizeIpProxyPort(activeProfile?.port || payload.ipProxyPort || '') || '');
+    payload.ipProxyProtocol = normalizeIpProxyProtocol(activeProfile?.protocol || payload.ipProxyProtocol);
+    payload.ipProxyUsername = String(activeProfile?.username || payload.ipProxyUsername || '').trim();
+    payload.ipProxyPassword = String(activeProfile?.password || payload.ipProxyPassword || '');
+    payload.ipProxyRegion = String(activeProfile?.region || payload.ipProxyRegion || '').trim();
   }
 
   return payload;
@@ -7290,6 +7451,85 @@ async function deleteAndBroadcastAccountRunHistoryRecords(recordIds = [], stateO
   return result;
 }
 
+function resolveIpProxyCandidateCountForAutoSwitch(state = {}, mode = 'account', provider = DEFAULT_IP_PROXY_SERVICE) {
+  const normalizedMode = typeof normalizeIpProxyMode === 'function'
+    ? normalizeIpProxyMode(mode)
+    : String(mode || 'account').trim().toLowerCase();
+  const normalizedProvider = typeof normalizeIpProxyProviderValue === 'function'
+    ? normalizeIpProxyProviderValue(provider)
+    : String(provider || DEFAULT_IP_PROXY_SERVICE).trim().toLowerCase();
+  if (normalizedMode === 'account' && typeof getAccountModeProxyPoolFromState === 'function') {
+    const pool = getAccountModeProxyPoolFromState(state, normalizedProvider);
+    return Array.isArray(pool) ? pool.length : 0;
+  }
+  if (typeof getIpProxyRuntimeSnapshot === 'function') {
+    const runtime = getIpProxyRuntimeSnapshot(state, normalizedMode, normalizedProvider);
+    return Array.isArray(runtime?.pool) ? runtime.pool.length : 0;
+  }
+  return 0;
+}
+
+async function maybeSwitchIpProxyAfterAutoRunRoundSuccess(payload = {}) {
+  if (typeof switchIpProxy !== 'function') {
+    return null;
+  }
+  const successfulRuns = Number(payload?.successfulRuns) || 0;
+  if (successfulRuns <= 0) {
+    return null;
+  }
+
+  const state = await getState();
+  if (!state?.ipProxyEnabled) {
+    return null;
+  }
+
+  const mode = typeof normalizeIpProxyMode === 'function'
+    ? normalizeIpProxyMode(state?.ipProxyMode)
+    : String(state?.ipProxyMode || 'account').trim().toLowerCase();
+  const provider = typeof normalizeIpProxyProviderValue === 'function'
+    ? normalizeIpProxyProviderValue(state?.ipProxyService)
+    : String(state?.ipProxyService || DEFAULT_IP_PROXY_SERVICE).trim().toLowerCase();
+  const threshold = typeof resolveIpProxyAutoSwitchThreshold === 'function'
+    ? resolveIpProxyAutoSwitchThreshold(state)
+    : Math.max(1, Math.min(500, Number(state?.ipProxyPoolTargetCount) || 20));
+  if (successfulRuns % threshold !== 0) {
+    return null;
+  }
+
+  const candidateCount = resolveIpProxyCandidateCountForAutoSwitch(state, mode, provider);
+  if (candidateCount <= 1) {
+    await addLog(
+      `任务切换阈值命中（成功 ${successfulRuns} 轮 / 阈值 ${threshold}），但当前仅 ${candidateCount} 条可切换代理，已跳过自动切换。`,
+      'info'
+    );
+    return {
+      skipped: true,
+      reason: 'insufficient_candidates',
+      candidateCount,
+      threshold,
+      successfulRuns,
+    };
+  }
+
+  const switchResult = await switchIpProxy('next', {
+    mode,
+    state,
+    forceRefresh: mode === 'api',
+    maxItems: typeof resolveIpProxyPoolTargetCountForMode === 'function'
+      ? resolveIpProxyPoolTargetCountForMode(state, mode)
+      : undefined,
+  });
+  const display = String(switchResult?.display || '').trim();
+  const routingApplied = Boolean(switchResult?.proxyRouting?.applied);
+  await addLog(
+    routingApplied
+      ? `任务切换阈值命中（成功 ${successfulRuns} 轮 / 阈值 ${threshold}），已自动切换代理：${display || '已切换到下一条'}。`
+      : `任务切换阈值命中（成功 ${successfulRuns} 轮 / 阈值 ${threshold}），已尝试自动切换代理，但连通性仍异常。`,
+    routingApplied ? 'ok' : 'warn'
+  );
+  return switchResult;
+}
+
 const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoRunController({
   addLog,
   appendAccountRunRecord: (...args) => appendAndBroadcastAccountRunRecord(...args),
@@ -7316,6 +7556,7 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   isStopError,
   launchAutoRunTimerPlan,
   normalizeAutoRunFallbackThreadIntervalMinutes,
+  onAutoRunRoundSuccess: (payload = {}) => maybeSwitchIpProxyAfterAutoRunRoundSuccess(payload),
   persistAutoRunTimerPlan,
   resetState,
   runAutoSequenceFromStep: (...args) => runAutoSequenceFromStep(...args),
@@ -8234,6 +8475,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   buildLuckmailSessionSettingsPayload,
   buildPersistentSettingsPayload,
   broadcastDataUpdate,
+  applyIpProxySettingsFromState,
   cancelScheduledAutoRun,
   checkIcloudSession,
   clearAccountRunHistory: (...args) => clearAndBroadcastAccountRunHistory(...args),
@@ -8290,6 +8532,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   launchAutoRunTimerPlan,
   listIcloudAliases,
   listLuckmailPurchasesForManagement,
+  refreshIpProxyPool,
   getCurrentMail2925Account,
   normalizeHotmailAccounts,
   normalizeMail2925Accounts,
@@ -8301,10 +8544,13 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   patchMail2925Account,
   registerTab,
   requestStop,
+  probeIpProxyExit,
   resetState,
   resumeAutoRun,
   scheduleAutoRun,
   selectLuckmailPurchase,
+  switchIpProxy,
+  changeIpProxyExit,
   setCurrentHotmailAccount,
   setCurrentMail2925Account,
   setContributionMode,
@@ -9488,14 +9734,32 @@ chrome.runtime.onStartup.addListener(() => {
   restoreAutoRunTimerIfNeeded().catch((err) => {
     console.error(LOG_PREFIX, 'Failed to restore auto run timer on startup:', err);
   });
+  ensureIpProxySettingsAppliedFromCurrentState({
+    skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
+    suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
+  }).catch((err) => {
+    console.error(LOG_PREFIX, 'Failed to restore IP proxy settings on startup:', err);
+  });
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   restoreAutoRunTimerIfNeeded().catch((err) => {
     console.error(LOG_PREFIX, 'Failed to restore auto run timer on install/update:', err);
   });
+  ensureIpProxySettingsAppliedFromCurrentState({
+    skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
+    suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
+  }).catch((err) => {
+    console.error(LOG_PREFIX, 'Failed to restore IP proxy settings on install/update:', err);
+  });
 });
 
 restoreAutoRunTimerIfNeeded().catch((err) => {
   console.error(LOG_PREFIX, 'Failed to restore auto run timer:', err);
+});
+ensureIpProxySettingsAppliedFromCurrentState({
+  skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
+  suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
+}).catch((err) => {
+  console.error(LOG_PREFIX, 'Failed to restore IP proxy settings:', err);
 });
