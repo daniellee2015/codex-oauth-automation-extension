@@ -7,7 +7,7 @@ importScripts(
   'background/account-run-history.js',
   'background/contribution-oauth.js',
   'background/mail-2925-session.js',
-  'background/ip-proxy-provider-lumiproxy.js',
+  'background/ip-proxy-provider-711proxy.js',
   'background/ip-proxy-core.js',
   'background/panel-bridge.js',
   'background/generated-email-helpers.js',
@@ -213,9 +213,10 @@ const CONTRIBUTION_SOURCE_SUB2API = 'sub2api';
 const CONTRIBUTION_SUB2API_DEFAULT_GROUP_NAME = 'codex号池';
 const CONTRIBUTION_SUB2API_PLUS_GROUP_NAME = 'openai-plus';
 const DEFAULT_SUB2API_REDIRECT_URI = 'http://localhost:1455/auth/callback';
-const DEFAULT_IP_PROXY_SERVICE = 'lumiproxy';
-const IP_PROXY_SERVICE_VALUES = ['lumiproxy', 'iproyal', '711proxy', 'omegaproxy'];
-const DEFAULT_IP_PROXY_MODE = 'api';
+const DEFAULT_IP_PROXY_SERVICE = '711proxy';
+const IP_PROXY_SERVICE_VALUES = ['711proxy', 'lumiproxy', 'iproyal', 'omegaproxy'];
+const IP_PROXY_ENABLED_SERVICE_VALUES = ['711proxy'];
+const DEFAULT_IP_PROXY_MODE = 'account';
 const IP_PROXY_MODE_VALUES = ['api', 'account'];
 const DEFAULT_IP_PROXY_PROTOCOL = 'http';
 const IP_PROXY_PROTOCOL_VALUES = ['http', 'https', 'socks4', 'socks5'];

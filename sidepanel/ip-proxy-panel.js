@@ -1,7 +1,13 @@
 // sidepanel/ip-proxy-panel.js — IP代理面板（轻量解耦）
 function normalizeIpProxyService(value = '') {
   const normalized = String(value || '').trim().toLowerCase();
-  return SUPPORTED_IP_PROXY_SERVICES.includes(normalized) ? normalized : DEFAULT_IP_PROXY_SERVICE;
+  const enabledServices = Array.isArray(globalThis.IP_PROXY_ENABLED_SERVICES)
+    ? globalThis.IP_PROXY_ENABLED_SERVICES
+    : [DEFAULT_IP_PROXY_SERVICE];
+  if (enabledServices.includes(normalized)) {
+    return normalized;
+  }
+  return DEFAULT_IP_PROXY_SERVICE;
 }
 
 const ipProxyActionState = {
@@ -249,9 +255,9 @@ function resolveIpProxyRegionFromInputs(options = {}) {
   const host = String(options?.host || '').trim();
   const username = String(options?.username || '').trim();
   const region = String(options?.region || '').trim();
-  if (selectedService === 'lumiproxy') {
-    const resolvedCode = typeof resolveLumiProxyCountryFromInputs === 'function'
-      ? resolveLumiProxyCountryFromInputs({ host, username, region })
+  if (selectedService === '711proxy') {
+    const resolvedCode = typeof resolve711ProxyRegionFromInputs === 'function'
+      ? resolve711ProxyRegionFromInputs({ host, username, region })
       : '';
     if (resolvedCode) {
       return String(resolvedCode || '').trim().toUpperCase();
@@ -1143,7 +1149,7 @@ function updateIpProxyUI(state = latestState) {
   const accountListAvailable = isIpProxyAccountListAvailable();
   const isApiMode = mode === 'api' && apiModeAvailable;
   const isAccountMode = mode === 'account';
-  const showSessionOptions = isAccountMode && (service === 'lumiproxy' || service === '711proxy');
+  const showSessionOptions = isAccountMode && service === '711proxy';
   const hasAccountListConfigured = accountListAvailable && isAccountMode && hasCurrentInputAccountListEntries();
   const canOperate = !isAutoRunLockedPhase() && !isAutoRunScheduledPhase();
   const actionState = getIpProxyActionState();
