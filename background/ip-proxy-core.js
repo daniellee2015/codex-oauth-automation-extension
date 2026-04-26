@@ -2881,18 +2881,23 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
   const hasMultipleAccountEntries = mode === 'account'
     && hasAccountListConfigured
     && getAccountModeProxyPoolFromState(resolvedState, provider).length > 1;
+  const hasAuthCredentials = Boolean(String(entry?.username || '').trim());
   const shouldForceDrain = !suppressAuthRebind && (
     explicitForceAuthRebind
     || shouldForceProxyConnectionDrainForEntry(entry)
     || (
       provider === '711proxy'
-      && hasAccountListConfigured
-      && Boolean(String(entry?.username || '').trim())
+      && mode === 'account'
+      && hasAuthCredentials
     )
   );
+  const allow711HostVariant = provider === '711proxy'
+    && mode === 'account'
+    && hasAuthCredentials
+    && shouldForceDrain;
   let effectiveEntry = buildEffectiveProxyEntryForApply(entry, {
     forceRotateVariant: shouldForceDrain,
-    allow711HostVariant: hasMultipleAccountEntries,
+    allow711HostVariant,
   });
   if (shouldForceDrain) {
     effectiveEntry = await maybeResolveProxyHostVariantForAuthSwitch(effectiveEntry, {
