@@ -159,6 +159,87 @@ test('Plus login-code step reuses step 8 verification logic but completes visibl
   assert.deepStrictEqual(remainingStepCalls, [11, 11]);
 });
 
+test('step 8 completes directly when auth page is already on OAuth consent page', async () => {
+  const events = {
+    resolveCalls: 0,
+    completeCalls: [],
+    setStates: [],
+    rerunStep7: 0,
+  };
+
+  const executor = api.createStep8Executor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        update: async () => {},
+      },
+    },
+    CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
+    completeStepFromBackground: async (step, payload) => {
+      events.completeCalls.push({ step, payload });
+    },
+    confirmCustomVerificationStepBypass: async () => {},
+    ensureStep8VerificationPageReady: async () => ({
+      state: 'oauth_consent_page',
+    }),
+    rerunStep7ForStep8Recovery: async () => {
+      events.rerunStep7 += 1;
+    },
+    getOAuthFlowRemainingMs: async () => 9000,
+    getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => Math.min(defaultTimeoutMs, 9000),
+    getMailConfig: () => ({
+      provider: 'qq',
+      label: 'QQ 邮箱',
+      source: 'mail-qq',
+      url: 'https://mail.qq.com',
+      navigateOnReuse: false,
+    }),
+    getState: async () => ({ email: 'user@example.com', password: 'secret' }),
+    getTabId: async (sourceName) => (sourceName === 'signup-page' ? 1 : 2),
+    HOTMAIL_PROVIDER: 'hotmail-api',
+    isTabAlive: async () => true,
+    isVerificationMailPollingError: () => false,
+    LUCKMAIL_PROVIDER: 'luckmail-api',
+    resolveVerificationStep: async () => {
+      events.resolveCalls += 1;
+    },
+    reuseOrCreateTab: async () => {},
+    setState: async (payload) => {
+      events.setStates.push(payload);
+    },
+    setStepStatus: async () => {},
+    shouldUseCustomRegistrationEmail: () => false,
+    STANDARD_MAIL_VERIFICATION_RESEND_INTERVAL_MS: 25000,
+    STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS: 8,
+    throwIfStopped: () => {},
+  });
+
+  await executor.executeStep8({
+    email: 'user@example.com',
+    password: 'secret',
+    oauthUrl: 'https://oauth.example/latest',
+  });
+
+  assert.equal(events.resolveCalls, 0);
+  assert.equal(events.rerunStep7, 0);
+  assert.deepStrictEqual(events.setStates, [
+    {
+      step8VerificationTargetEmail: '',
+      loginVerificationRequestedAt: null,
+    },
+  ]);
+  assert.deepStrictEqual(events.completeCalls, [
+    {
+      step: 8,
+      payload: {
+        loginVerificationRequestedAt: null,
+        skipLoginVerificationStep: true,
+        directOAuthConsentPage: true,
+      },
+    },
+  ]);
+});
+
 test('step 8 uses a fixed 10-minute lookback window and disables resend interval for 2925 mailbox polling', async () => {
   let capturedOptions = null;
   let ensureCalls = 0;
