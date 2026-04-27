@@ -104,6 +104,7 @@ const ipProxyEnabledButtons = Array.from(document.querySelectorAll('[data-ip-pro
 const rowIpProxyFold = document.getElementById('row-ip-proxy-fold');
 const rowIpProxyService = document.getElementById('row-ip-proxy-service');
 const selectIpProxyService = document.getElementById('select-ip-proxy-service');
+const btnIpProxyServiceLogin = document.getElementById('btn-ip-proxy-service-login');
 const rowIpProxyMode = document.getElementById('row-ip-proxy-mode');
 const ipProxyModeButtons = Array.from(document.querySelectorAll('[data-ip-proxy-mode]'));
 const rowIpProxyLayout = document.getElementById('row-ip-proxy-layout');
@@ -741,6 +742,13 @@ const MAIL_PROVIDER_LOGIN_CONFIGS = {
   '2925': {
     label: '2925 邮箱',
     url: 'https://2925.com/#/mailList',
+  },
+};
+const IP_PROXY_SERVICE_LOGIN_CONFIGS = {
+  '711proxy': {
+    label: '711Proxy',
+    url: 'https://www.711proxy.com/',
+    buttonLabel: '登录',
   },
 };
 
@@ -3694,6 +3702,16 @@ function getMailProviderLoginUrl(provider = selectMailProvider.value) {
   return url ? url : '';
 }
 
+function getIpProxyServiceLoginConfig(service = selectIpProxyService?.value || latestState?.ipProxyService || DEFAULT_IP_PROXY_SERVICE) {
+  return IP_PROXY_SERVICE_LOGIN_CONFIGS[String(service || '').trim()] || null;
+}
+
+function getIpProxyServiceLoginUrl(service = selectIpProxyService?.value || latestState?.ipProxyService || DEFAULT_IP_PROXY_SERVICE) {
+  const config = getIpProxyServiceLoginConfig(service);
+  const url = String(config?.url || '').trim();
+  return url ? url : '';
+}
+
 function isCurrentEmailManagedByHotmail(state = latestState) {
   const hotmailEmail = getCurrentHotmailEmail(state);
   if (!hotmailEmail) {
@@ -3766,6 +3784,28 @@ function updateMailLoginButtonState() {
   btnMailLogin.disabled = !loginUrl;
   btnMailLogin.textContent = config?.buttonLabel || '登录';
   btnMailLogin.title = loginUrl ? `打开 ${config.label} 登录页` : '当前邮箱服务没有可跳转的登录页';
+}
+
+function updateIpProxyServiceLoginButtonState(options = {}) {
+  if (!btnIpProxyServiceLogin) {
+    return;
+  }
+  const service = normalizeIpProxyService(
+    options?.service
+    || selectIpProxyService?.value
+    || latestState?.ipProxyService
+    || DEFAULT_IP_PROXY_SERVICE
+  );
+  const loginConfig = getIpProxyServiceLoginConfig(service);
+  const loginUrl = getIpProxyServiceLoginUrl(service);
+  const enabled = options?.enabled !== undefined
+    ? Boolean(options.enabled)
+    : Boolean(getSelectedIpProxyEnabled());
+  btnIpProxyServiceLogin.disabled = !enabled || !loginUrl;
+  btnIpProxyServiceLogin.textContent = loginConfig?.buttonLabel || '登录';
+  btnIpProxyServiceLogin.title = loginUrl
+    ? `打开 ${loginConfig?.label || service} 登录页`
+    : '当前代理服务没有可跳转的登录页';
 }
 
 function updateMailProviderUI() {
@@ -5030,6 +5070,19 @@ btnMailLogin?.addEventListener('click', async () => {
   } catch (err) {
     showToast(`打开${config.label}失败：${err.message}`, 'error');
   }
+});
+
+btnIpProxyServiceLogin?.addEventListener('click', () => {
+  const service = normalizeIpProxyService(
+    selectIpProxyService?.value || latestState?.ipProxyService || DEFAULT_IP_PROXY_SERVICE
+  );
+  const config = getIpProxyServiceLoginConfig(service);
+  const loginUrl = getIpProxyServiceLoginUrl(service);
+  if (!config || !loginUrl) {
+    showToast('当前代理服务没有可跳转的登录页。', 'warn', 1800);
+    return;
+  }
+  openExternalUrl(loginUrl);
 });
 
 localCpaStep9ModeButtons.forEach((button) => {

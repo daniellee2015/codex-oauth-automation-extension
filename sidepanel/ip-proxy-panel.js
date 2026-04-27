@@ -1238,6 +1238,12 @@ function updateIpProxyUI(state = latestState) {
     selectIpProxyService.value = service;
     selectIpProxyService.disabled = true;
   }
+  if (typeof updateIpProxyServiceLoginButtonState === 'function') {
+    updateIpProxyServiceLoginButtonState({
+      service,
+      enabled,
+    });
+  }
   ipProxyModeButtons.forEach((button) => {
     const buttonMode = normalizeIpProxyMode(button?.dataset?.ipProxyMode || DEFAULT_IP_PROXY_MODE);
     const apiButton = buttonMode === 'api';
