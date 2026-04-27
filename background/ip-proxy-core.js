@@ -45,6 +45,8 @@ const IP_PROXY_EXIT_PROBE_ENDPOINTS = [
 ];
 const IP_PROXY_EXIT_PROBE_ENDPOINTS_711_STICKY = [
   'https://ipinfo.io/json',
+  'https://ipwho.is/',
+  'https://ipapi.co/json/',
 ];
 const IP_PROXY_BACKGROUND_PROBE_MAX_ENDPOINTS = 4;
 const IP_PROXY_BACKGROUND_PROBE_PER_ENDPOINT_TIMEOUT_MS = 3500;
@@ -2898,7 +2900,8 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
     effectiveEntry = await maybeResolveProxyHostVariantForAuthSwitch(effectiveEntry, {
       force: true,
       timeoutMs: 3500,
-      allow711ResolvedIp: hasMultipleAccountEntries,
+      // 单账号在“显式鉴权重绑复测”时也允许解析 IP 变体，避免长期复用旧连接导致 challenge=0。
+      allow711ResolvedIp: hasMultipleAccountEntries || explicitForceAuthRebind,
     }).catch(() => effectiveEntry);
   }
 
