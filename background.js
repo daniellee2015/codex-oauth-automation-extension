@@ -227,6 +227,7 @@ const IP_PROXY_ROUTE_ALL_TRAFFIC = true;
 const IP_PROXY_ACCOUNT_LIST_ENABLED = false;
 const IP_PROXY_INIT_ENABLE_EXIT_PROBE = false;
 const IP_PROXY_INIT_SUPPRESS_AUTH_REBIND = true;
+const IP_PROXY_INIT_AUTO_APPLY = false;
 const IP_PROXY_TARGET_HOST_PATTERNS = [
   'openai.com',
   '*.openai.com',
@@ -6719,23 +6720,48 @@ const AUTO_RUN_PRE_EXECUTION_DELAYS_BY_STEP_KEY = new Map([
 ]);
 
 function waitForStepComplete(step, timeoutMs = 120000) {
-  return new Promise((resolve, reject) => {
-    throwIfStopped();
-    if (stepWaiters.has(step)) {
-      console.warn(LOG_PREFIX, `[waitForStepComplete] replacing existing waiter for step ${step}`);
-    }
-    console.log(LOG_PREFIX, `[waitForStepComplete] register step ${step}, timeout=${timeoutMs}ms`);
+  throwIfStopped();
+  const normalizedStep = Number(step);
+  const existingWaiter = stepWaiters.get(normalizedStep);
+  if (existingWaiter?.promise) {
+    console.log(LOG_PREFIX, `[waitForStepComplete] reuse existing waiter for step ${normalizedStep}`);
+    return existingWaiter.promise;
+  }
+
+  console.log(LOG_PREFIX, `[waitForStepComplete] register step ${normalizedStep}, timeout=${timeoutMs}ms`);
+  const waiter = {
+    promise: null,
+    resolve: null,
+    reject: null,
+  };
+
+  waiter.promise = new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      stepWaiters.delete(step);
-      console.warn(LOG_PREFIX, `[waitForStepComplete] timeout for step ${step} after ${timeoutMs}ms`);
-      reject(new Error(`步骤 ${step} 等待超时（>${timeoutMs / 1000} 秒）`));
+      if (stepWaiters.get(normalizedStep) === waiter) {
+        stepWaiters.delete(normalizedStep);
+      }
+      console.warn(LOG_PREFIX, `[waitForStepComplete] timeout for step ${normalizedStep} after ${timeoutMs}ms`);
+      reject(new Error(`步骤 ${normalizedStep} 等待超时（>${timeoutMs / 1000} 秒）`));
     }, timeoutMs);
 
-    stepWaiters.set(step, {
-      resolve: (data) => { clearTimeout(timer); stepWaiters.delete(step); resolve(data); },
-      reject: (err) => { clearTimeout(timer); stepWaiters.delete(step); reject(err); },
-    });
+    waiter.resolve = (data) => {
+      clearTimeout(timer);
+      if (stepWaiters.get(normalizedStep) === waiter) {
+        stepWaiters.delete(normalizedStep);
+      }
+      resolve(data);
+    };
+    waiter.reject = (err) => {
+      clearTimeout(timer);
+      if (stepWaiters.get(normalizedStep) === waiter) {
+        stepWaiters.delete(normalizedStep);
+      }
+      reject(err);
+    };
   });
+
+  stepWaiters.set(normalizedStep, waiter);
+  return waiter.promise;
 }
 
 function getStepExecutionKeyForState(step, state = {}) {
@@ -8360,6 +8386,7 @@ const step8Executor = self.MultiPageBackgroundStep8?.createStep8Executor({
   addLog,
   chrome,
   CLOUDFLARE_TEMP_EMAIL_PROVIDER,
+  completeStepFromBackground,
   confirmCustomVerificationStepBypass: verificationFlowHelpers.confirmCustomVerificationStepBypass,
   ensureMail2925MailboxSession,
   ensureIcloudMailSession: ensureIcloudMailSessionForVerification,
@@ -9066,6 +9093,38 @@ function isAddPhoneAuthState(authState = {}) {
 }
 
 async function getPostStep6AutoRestartDecision(step, error) {
+  const resolveStepKey = (stepId, state) => {
+    if (typeof getStepExecutionKeyForState === 'function') {
+      return getStepExecutionKeyForState(stepId, state);
+    }
+    return String(
+      typeof getStepDefinitionForState === 'function'
+        ? (getStepDefinitionForState(stepId, state)?.key || '')
+        : ''
+    ).trim();
+  };
+  const findStepIdByKeyForState = (targetKey, state = {}) => {
+    const normalizedKey = String(targetKey || '').trim();
+    if (!normalizedKey) {
+      return null;
+    }
+    const stepIds = typeof getStepIdsForState === 'function'
+      ? getStepIdsForState(state)
+      : [];
+    for (const stepId of stepIds) {
+      if (resolveStepKey(stepId, state) === normalizedKey) {
+        return Number(stepId);
+      }
+    }
+    return null;
+  };
+  const isPlatformVerifyTransientRetryError = (errorMessage = '') => {
+    const normalizedMessage = String(errorMessage || '');
+    const mentionsTokenExchange = /auth\.openai\.com\/oauth\/token/i.test(normalizedMessage);
+    const hasTransientNetworkSignal = /connect:\s*connection refused|failed to fetch|i\/o timeout|context deadline exceeded|eof|connection reset by peer/i.test(normalizedMessage);
+    return mentionsTokenExchange && hasTransientNetworkSignal;
+  };
+
   const normalizedStep = Number(step);
   const errorMessage = getErrorMessage(error);
   const shouldForceRestartFromStep7 = /restart step 7 with a new number/i.test(errorMessage);
@@ -9076,6 +9135,14 @@ async function getPostStep6AutoRestartDecision(step, error) {
   const lastStepId = typeof getLastStepIdForState === 'function'
     ? getLastStepIdForState(latestState)
     : (typeof LAST_STEP_ID === 'number' ? LAST_STEP_ID : 10);
+  const currentStepKey = resolveStepKey(normalizedStep, latestState);
+  const confirmOauthStep = findStepIdByKeyForState('confirm-oauth', latestState);
+  const shouldRetryFromConfirmStep = currentStepKey === 'platform-verify'
+    && Number.isFinite(confirmOauthStep)
+    && confirmOauthStep > 0
+    && confirmOauthStep < normalizedStep
+    && isPlatformVerifyTransientRetryError(errorMessage);
+  const restartAnchorStep = shouldRetryFromConfirmStep ? confirmOauthStep : authChainStartStep;
   if (!Number.isFinite(normalizedStep) || normalizedStep < authChainStartStep || normalizedStep > lastStepId) {
     return {
       shouldRestart: false,
@@ -9112,7 +9179,7 @@ async function getPostStep6AutoRestartDecision(step, error) {
   let authState = null;
   try {
     authState = await getLoginAuthStateFromContent({
-      logMessage: `步骤 ${normalizedStep}：正在确认当前认证页状态，以决定是否回到步骤 ${authChainStartStep} 重开...`,
+      logMessage: `步骤 ${normalizedStep}：正在确认当前认证页状态，以决定是否回到步骤 ${restartAnchorStep} 重开...`,
     });
   } catch (inspectError) {
     console.warn(LOG_PREFIX, '[AutoRun] failed to inspect login auth state after post-step6 error', {
@@ -9137,7 +9204,7 @@ async function getPostStep6AutoRestartDecision(step, error) {
     shouldRestart: true,
     blockedByAddPhone: false,
     forcedByPhoneVerificationTimeout: false,
-    restartStep: authChainStartStep,
+    restartStep: restartAnchorStep,
     errorMessage,
     authState,
   };
@@ -9170,8 +9237,12 @@ async function getLoginAuthStateFromContent(options = {}) {
 async function ensureStep8VerificationPageReady(options = {}) {
   const visibleStep = Number(options.visibleStep) || 8;
   const authLoginStep = Number(options.authLoginStep) || (visibleStep >= 11 ? 10 : 7);
-  const pageState = await getLoginAuthStateFromContent(options);
-  if (pageState.state === 'verification_page') {
+  const inspectState = async (overrides = {}) => getLoginAuthStateFromContent({
+    ...options,
+    ...overrides,
+  });
+  let pageState = await inspectState();
+  if (pageState.state === 'verification_page' || pageState.state === 'oauth_consent_page') {
     return pageState;
   }
 
@@ -9180,11 +9251,79 @@ async function ensureStep8VerificationPageReady(options = {}) {
   }
 
   if (pageState.state === 'login_timeout_error_page') {
+    let recovered = false;
+    try {
+      const recoverPayload = {
+        flow: 'login',
+        logLabel: `步骤 ${visibleStep}：检测到登录超时报错，正在点击“重试”恢复当前页面`,
+        step: visibleStep,
+        timeoutMs: 12000,
+      };
+      const recoverMessage = {
+        type: 'RECOVER_AUTH_RETRY_PAGE',
+        source: 'background',
+        payload: recoverPayload,
+      };
+      let recoverResult = null;
+      const recoverTimeoutMs = 15000;
+      if (typeof sendToContentScriptResilient === 'function') {
+        recoverResult = await sendToContentScriptResilient(
+          'signup-page',
+          recoverMessage,
+          {
+            timeoutMs: recoverTimeoutMs,
+            responseTimeoutMs: recoverTimeoutMs,
+            retryDelayMs: 700,
+            logMessage: `步骤 ${visibleStep}：认证页进入重试/超时报错状态，正在尝试点击“重试”恢复...`,
+          }
+        );
+      } else if (typeof sendToContentScript === 'function') {
+        recoverResult = await sendToContentScript('signup-page', recoverMessage, {
+          responseTimeoutMs: recoverTimeoutMs,
+        });
+      }
+
+      if (recoverResult?.error) {
+        throw new Error(recoverResult.error);
+      }
+      recovered = Boolean(recoverResult?.recovered || Number(recoverResult?.clickCount) > 0);
+      if (recovered && typeof addLog === 'function') {
+        await addLog(`步骤 ${visibleStep}：认证页已点击“重试”，正在重新确认验证码页状态...`, 'warn');
+      }
+    } catch (recoverError) {
+      const recoverMessage = getErrorMessage(recoverError);
+      if (/^CF_SECURITY_BLOCKED::/i.test(recoverMessage)) {
+        throw recoverError;
+      }
+      if (typeof addLog === 'function') {
+        await addLog(`步骤 ${visibleStep}：认证页“重试”恢复失败：${recoverMessage}`, 'warn');
+      }
+    }
+
+    if (recovered) {
+      pageState = await inspectState({
+        timeoutMs: 10000,
+        responseTimeoutMs: 10000,
+        retryDelayMs: 500,
+        logMessage: `步骤 ${visibleStep}：认证页恢复后，正在确认验证码页是否可继续...`,
+      });
+      if (pageState.state === 'verification_page' || pageState.state === 'oauth_consent_page') {
+        return pageState;
+      }
+      if (pageState.maxCheckAttemptsBlocked) {
+        throw new Error(`${CLOUDFLARE_SECURITY_BLOCK_ERROR_PREFIX}${CLOUDFLARE_SECURITY_BLOCK_USER_MESSAGE}`);
+      }
+      if (pageState.state === 'add_phone_page' || pageState.state === 'phone_verification_page') {
+        const urlPart = pageState.url ? ` URL: ${pageState.url}` : '';
+        throw new Error(`步骤 ${visibleStep}：当前认证页进入手机号页面，当前流程无法继续自动授权。${urlPart}`.trim());
+      }
+    }
+
     const urlPart = pageState.url ? ` URL: ${pageState.url}` : '';
     throw new Error(`STEP8_RESTART_STEP7::步骤 ${visibleStep}：当前认证页进入登录超时报错页，请回到步骤 ${authLoginStep} 重新开始。${urlPart}`.trim());
   }
 
-  if (pageState.state === 'add_phone_page') {
+  if (pageState.state === 'add_phone_page' || pageState.state === 'phone_verification_page') {
     const urlPart = pageState.url ? ` URL: ${pageState.url}` : '';
     throw new Error(`步骤 ${visibleStep}：当前认证页进入手机号页面，当前流程无法继续自动授权。${urlPart}`.trim());
   }
@@ -9735,32 +9874,38 @@ chrome.runtime.onStartup.addListener(() => {
   restoreAutoRunTimerIfNeeded().catch((err) => {
     console.error(LOG_PREFIX, 'Failed to restore auto run timer on startup:', err);
   });
-  ensureIpProxySettingsAppliedFromCurrentState({
-    skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
-    suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
-  }).catch((err) => {
-    console.error(LOG_PREFIX, 'Failed to restore IP proxy settings on startup:', err);
-  });
+  if (IP_PROXY_INIT_AUTO_APPLY) {
+    ensureIpProxySettingsAppliedFromCurrentState({
+      skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
+      suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
+    }).catch((err) => {
+      console.error(LOG_PREFIX, 'Failed to restore IP proxy settings on startup:', err);
+    });
+  }
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   restoreAutoRunTimerIfNeeded().catch((err) => {
     console.error(LOG_PREFIX, 'Failed to restore auto run timer on install/update:', err);
   });
-  ensureIpProxySettingsAppliedFromCurrentState({
-    skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
-    suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
-  }).catch((err) => {
-    console.error(LOG_PREFIX, 'Failed to restore IP proxy settings on install/update:', err);
-  });
+  if (IP_PROXY_INIT_AUTO_APPLY) {
+    ensureIpProxySettingsAppliedFromCurrentState({
+      skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
+      suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
+    }).catch((err) => {
+      console.error(LOG_PREFIX, 'Failed to restore IP proxy settings on install/update:', err);
+    });
+  }
 });
 
 restoreAutoRunTimerIfNeeded().catch((err) => {
   console.error(LOG_PREFIX, 'Failed to restore auto run timer:', err);
 });
-ensureIpProxySettingsAppliedFromCurrentState({
-  skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
-  suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
-}).catch((err) => {
-  console.error(LOG_PREFIX, 'Failed to restore IP proxy settings:', err);
-});
+if (IP_PROXY_INIT_AUTO_APPLY) {
+  ensureIpProxySettingsAppliedFromCurrentState({
+    skipExitProbe: !IP_PROXY_INIT_ENABLE_EXIT_PROBE,
+    suppressAuthRebind: IP_PROXY_INIT_SUPPRESS_AUTH_REBIND,
+  }).catch((err) => {
+    console.error(LOG_PREFIX, 'Failed to restore IP proxy settings:', err);
+  });
+}

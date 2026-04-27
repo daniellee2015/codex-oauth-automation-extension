@@ -8,6 +8,7 @@
       addLog,
       chrome,
       CLOUDFLARE_TEMP_EMAIL_PROVIDER,
+      completeStepFromBackground,
       confirmCustomVerificationStepBypass,
       ensureMail2925MailboxSession,
       ensureIcloudMailSession,
@@ -131,6 +132,21 @@
         authLoginStep: getAuthLoginStepForVisibleStep(visibleStep),
         timeoutMs: await getStep8ReadyTimeoutMs('确认登录验证码页已就绪', state?.oauthUrl || '', visibleStep),
       });
+      if (pageState?.state === 'oauth_consent_page') {
+        await setState({
+          step8VerificationTargetEmail: '',
+          loginVerificationRequestedAt: null,
+        });
+        await addLog(`步骤 ${visibleStep}：当前认证页已进入 OAuth 授权页，跳过登录验证码拉取并继续后续流程。`, 'warn');
+        if (typeof completeStepFromBackground === 'function') {
+          await completeStepFromBackground(visibleStep, {
+            loginVerificationRequestedAt: null,
+            skipLoginVerificationStep: true,
+            directOAuthConsentPage: true,
+          });
+        }
+        return;
+      }
       const shouldCompareVerificationEmail = mail.provider !== '2925';
       const displayedVerificationEmail = shouldCompareVerificationEmail
         ? normalizeStep8VerificationTargetEmail(pageState?.displayedEmail)
