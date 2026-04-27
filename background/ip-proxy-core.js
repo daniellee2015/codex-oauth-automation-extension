@@ -2895,6 +2895,15 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
     && mode === 'account'
     && hasAuthCredentials
     && shouldForceDrain;
+  const shouldUse711ResolvedIpVariant = provider === '711proxy'
+    && mode === 'account'
+    && hasAuthCredentials
+    && shouldForceDrain
+    && (
+      hasMultipleAccountEntries
+      || explicitForceAuthRebind
+      || Boolean(String(entry?.region || '').trim())
+    );
   let effectiveEntry = buildEffectiveProxyEntryForApply(entry, {
     forceRotateVariant: shouldForceDrain,
     allow711HostVariant,
@@ -2903,7 +2912,9 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
     effectiveEntry = await maybeResolveProxyHostVariantForAuthSwitch(effectiveEntry, {
       force: true,
       timeoutMs: 3500,
-      allow711ResolvedIp: hasMultipleAccountEntries,
+      // 711 在账号模式下若存在地区约束或显式重绑请求，优先尝试解析 IP 变体，
+      // 用于切断同连接复用导致的“未触发 407 挑战”问题。
+      allow711ResolvedIp: shouldUse711ResolvedIpVariant,
     }).catch(() => effectiveEntry);
   }
 
