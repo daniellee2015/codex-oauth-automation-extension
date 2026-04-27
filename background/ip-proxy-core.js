@@ -488,7 +488,16 @@ function normalizeIpProxyAccountList(value = '') {
     .replace(/\r/g, '')
     .split('\n')
     .map((line) => line.trim())
-    .filter(Boolean)
+    .filter((line) => {
+      if (!line) {
+        return false;
+      }
+      // 允许用注释快速停用账号列表行，避免“看似注释、实际仍生效”。
+      if (/^(?:#|\/\/|;)/.test(line)) {
+        return false;
+      }
+      return true;
+    })
     .join('\n');
 }
 

@@ -145,7 +145,16 @@ function normalizeIpProxyAccountList(value = '') {
     .replace(/\r/g, '')
     .split('\n')
     .map((line) => line.trim())
-    .filter(Boolean)
+    .filter((line) => {
+      if (!line) {
+        return false;
+      }
+      // 与后台保持一致：支持 # / // / ; 注释行，注释行不参与生效。
+      if (/^(?:#|\/\/|;)/.test(line)) {
+        return false;
+      }
+      return true;
+    })
     .join('\n');
 }
 

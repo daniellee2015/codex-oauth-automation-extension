@@ -9530,7 +9530,15 @@ async function waitForStep8Ready(tabId, timeoutMs = STEP8_READY_WAIT_TIMEOUT_MS)
       throw new Error('步骤 9：认证页进入了手机号页面，当前不是 OAuth 同意页，无法继续自动授权。');
     }
     if (pageState?.retryPage) {
-      throw new Error(`步骤 9：当前认证页已进入重试页，当前流程将直接报错。URL: ${pageState.url || 'unknown'}`);
+      const retryUrl = String(pageState?.url || '').trim();
+      const consentLikeRetry = Boolean(
+        pageState?.consentReady
+        || pageState?.consentPage
+        || /\/sign-in-with-chatgpt\/[^/?#]+\/consent(?:[/?#]|$)/i.test(retryUrl)
+      );
+      if (!consentLikeRetry) {
+        throw new Error(`步骤 9：当前认证页已进入重试页，当前流程将直接报错。URL: ${pageState.url || 'unknown'}`);
+      }
     }
     if (pageState?.consentReady) {
       return pageState;
@@ -9697,7 +9705,15 @@ async function waitForStep8ClickEffect(tabId, baselineUrl, timeoutMs = STEP8_CLI
       throw new Error('步骤 9：点击“继续”后页面跳到了手机号页面，当前流程无法继续自动授权。');
     }
     if (pageState?.retryPage) {
-      throw new Error(`步骤 9：点击“继续”后页面进入认证页重试页，当前流程将直接报错。URL: ${pageState.url || baselineUrl || 'unknown'}`);
+      const retryUrl = String(pageState?.url || baselineUrl || '').trim();
+      const consentLikeRetry = Boolean(
+        pageState?.consentReady
+        || pageState?.consentPage
+        || /\/sign-in-with-chatgpt\/[^/?#]+\/consent(?:[/?#]|$)/i.test(retryUrl)
+      );
+      if (!consentLikeRetry) {
+        throw new Error(`步骤 9：点击“继续”后页面进入认证页重试页，当前流程将直接报错。URL: ${pageState.url || baselineUrl || 'unknown'}`);
+      }
     }
     if (pageState === null) {
       if (!recovered) {
