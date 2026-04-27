@@ -45,6 +45,8 @@ const IP_PROXY_EXIT_PROBE_ENDPOINTS = [
 ];
 const IP_PROXY_EXIT_PROBE_ENDPOINTS_711_STICKY = [
   'https://ipinfo.io/json',
+  'https://ipwho.is/',
+  'https://ipapi.co/json/',
 ];
 const IP_PROXY_BACKGROUND_PROBE_MAX_ENDPOINTS = 4;
 const IP_PROXY_BACKGROUND_PROBE_PER_ENDPOINT_TIMEOUT_MS = 3500;
@@ -2887,7 +2889,7 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
     || shouldForceProxyConnectionDrainForEntry(entry)
     || (
       provider === '711proxy'
-      && mode === 'account'
+      && hasAccountListConfigured
       && hasAuthCredentials
     )
   );
@@ -2902,7 +2904,6 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
     && (
       hasMultipleAccountEntries
       || explicitForceAuthRebind
-      || Boolean(String(entry?.region || '').trim())
     );
   let effectiveEntry = buildEffectiveProxyEntryForApply(entry, {
     forceRotateVariant: shouldForceDrain,
