@@ -45,8 +45,6 @@ const IP_PROXY_EXIT_PROBE_ENDPOINTS = [
 ];
 const IP_PROXY_EXIT_PROBE_ENDPOINTS_711_STICKY = [
   'https://ipinfo.io/json',
-  'https://ipwho.is/',
-  'https://ipapi.co/json/',
 ];
 const IP_PROXY_BACKGROUND_PROBE_MAX_ENDPOINTS = 4;
 const IP_PROXY_BACKGROUND_PROBE_PER_ENDPOINT_TIMEOUT_MS = 3500;
@@ -2883,39 +2881,24 @@ async function applyIpProxySettingsFromState(state = {}, options = {}) {
   const hasMultipleAccountEntries = mode === 'account'
     && hasAccountListConfigured
     && getAccountModeProxyPoolFromState(resolvedState, provider).length > 1;
-  const hasAuthCredentials = Boolean(String(entry?.username || '').trim());
   const shouldForceDrain = !suppressAuthRebind && (
     explicitForceAuthRebind
     || shouldForceProxyConnectionDrainForEntry(entry)
     || (
       provider === '711proxy'
       && hasAccountListConfigured
-      && hasAuthCredentials
+      && Boolean(String(entry?.username || '').trim())
     )
   );
-  const allow711HostVariant = provider === '711proxy'
-    && mode === 'account'
-    && hasAuthCredentials
-    && shouldForceDrain;
-  const shouldUse711ResolvedIpVariant = provider === '711proxy'
-    && mode === 'account'
-    && hasAuthCredentials
-    && shouldForceDrain
-    && (
-      hasMultipleAccountEntries
-      || explicitForceAuthRebind
-    );
   let effectiveEntry = buildEffectiveProxyEntryForApply(entry, {
     forceRotateVariant: shouldForceDrain,
-    allow711HostVariant,
+    allow711HostVariant: hasMultipleAccountEntries,
   });
   if (shouldForceDrain) {
     effectiveEntry = await maybeResolveProxyHostVariantForAuthSwitch(effectiveEntry, {
       force: true,
       timeoutMs: 3500,
-      // 711 在账号模式下若存在地区约束或显式重绑请求，优先尝试解析 IP 变体，
-      // 用于切断同连接复用导致的“未触发 407 挑战”问题。
-      allow711ResolvedIp: shouldUse711ResolvedIpVariant,
+      allow711ResolvedIp: hasMultipleAccountEntries,
     }).catch(() => effectiveEntry);
   }
 
