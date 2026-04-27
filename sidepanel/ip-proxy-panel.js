@@ -472,20 +472,26 @@ function getIpProxyRuntimeFieldNames(mode = DEFAULT_IP_PROXY_MODE) {
 function getIpProxyRuntimeSnapshot(state = latestState, mode = normalizeIpProxyModeForCurrentRelease(state?.ipProxyMode)) {
   const normalizedMode = normalizeIpProxyModeForCurrentRelease(mode);
   const fields = getIpProxyRuntimeFieldNames(normalizedMode);
+  const hasAccountListConfigured = normalizedMode === 'account'
+    && normalizeIpProxyAccountList(state?.ipProxyAccountList || '').split('\n').filter(Boolean).length > 0;
   const hasModePool = Array.isArray(state?.[fields.poolKey]);
   const hasModeCurrent = state?.[fields.currentKey] !== undefined && state?.[fields.currentKey] !== null;
   const hasModeIndex = state?.[fields.indexKey] !== undefined && state?.[fields.indexKey] !== null;
   const modePool = Array.isArray(state?.[fields.poolKey]) ? state[fields.poolKey] : [];
-  const pool = hasModePool ? modePool : [];
-  const current = hasModeCurrent ? state?.[fields.currentKey] : null;
-  const rawIndex = hasModeIndex ? state?.[fields.indexKey] : 0;
+  // 账号模式在“固定账号”场景下不应读取历史 runtime 缓存，否则会出现
+  // “状态显示 A 节点、当前节点显示 B 节点”的错位。
+  const allowAccountRuntimeCache = normalizedMode !== 'account' || hasAccountListConfigured;
+  const pool = hasModePool && allowAccountRuntimeCache ? modePool : [];
+  const current = hasModeCurrent && allowAccountRuntimeCache ? state?.[fields.currentKey] : null;
+  const rawIndex = hasModeIndex && allowAccountRuntimeCache ? state?.[fields.indexKey] : 0;
   const index = Number.isFinite(Number(rawIndex)) ? Math.max(0, Math.floor(Number(rawIndex))) : 0;
   return {
     mode: normalizedMode,
     ...fields,
-    hasModePool,
-    hasModeCurrent,
-    hasModeIndex,
+    hasModePool: hasModePool && allowAccountRuntimeCache,
+    hasModeCurrent: hasModeCurrent && allowAccountRuntimeCache,
+    hasModeIndex: hasModeIndex && allowAccountRuntimeCache,
+    hasAccountListConfigured,
     pool,
     current,
     index,
